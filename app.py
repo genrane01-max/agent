@@ -3,9 +3,8 @@ from flask import Flask, request, jsonify
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-# 1. ตั้งค่าการเชื่อมต่อ Firebase (หัวสมองของบอท)
-# คุณต้องมีไฟล์ serviceAccountKey.json ที่ได้จาก Firebase Console อยู่ในโฟลเดอร์เดียวกัน
-cred = credentials.Certificate("serviceAccountKey.json") 
+# 1. ตั้งค่าการเชื่อมต่อ Firebase
+cred = credentials.Certificate("serviceAccountKey.json")
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
@@ -18,10 +17,13 @@ def index():
 # 2. ฟังก์ชันโต้ตอบ (Brain Logic) เชื่อมต่อฐานข้อมูล
 @app.route("/ask", methods=["POST"])
 def ask_bot():
-    data = request.get_json()
-    user_query = data.get("question", "").lower() 
-
     try:
+        data = request.get_json(silent=True) or {}
+        user_query = data.get("question", "").strip().lower()
+
+        if not user_query:
+            return jsonify({"status": "error", "message": "กรุณาระบุคำถาม (question)"}), 400
+
         # ค้นหาคำตอบจาก Firestore ใน Collection ชื่อ 'brain'
         doc_ref = db.collection("brain").document(user_query)
         doc = doc_ref.get()
@@ -34,8 +36,9 @@ def ask_bot():
         return jsonify({"status": "success", "response": bot_answer})
 
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == "__main__":
-    # ใช้ Port จาก Environment Variable ที่ Render กำหนดให้
-    app.run(debug=True, port=int(os.environ.get("PORT", 5000)))
+    port = int(os.environ.get("PORT", 5000))
+    # กำหนด host="0.0.0.0" เพื่อให้ Render รับ Traffic จากภายนอกได้
+    app.run(host="0.0.0.0", port=port)
