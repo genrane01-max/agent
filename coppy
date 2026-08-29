@@ -75,3 +75,56 @@ class AgentRegistry:
 
 # สร้างอินสแตนซ์ของ Registry ไว้ใช้งานร่วมกันทั่วทั้งโปรเจกต์
 registry = AgentRegistry()
+
+
+# agent_chat.py
+from agent_base import BaseAgent, registry
+
+class ChatAgent(BaseAgent):
+    """
+    Bot 1: แผนกพูดคุยและบริการทั่วไป (Chat & Greeting Agent)
+    ทำหน้าที่ตอบคำถามทั่วไป กล่าวทักทาย และช่วยเหลือเบื้องต้น
+    """
+    def __init__(self):
+        super().__init__(
+            name="Bot_1_Chat",
+            description="ดูแลการทักทาย พูดคุยทั่วไป และแนะนำวิธีการใช้งานระบบ"
+        )
+
+    def can_handle(self, message: str, context: dict) -> bool:
+        # เนื่องจากตัวนี้ทำหน้าที่เป็น Default Fallback ด้วย 
+        # จึงให้เช็กคำสำคัญประเภทคำทักทายหรือคำถามทั่วไป
+        msg = message.lower().strip()
+        keywords = ["สวัสดี", "hello", "hi", "หวัดดี", "บอท", "ช่วยหน่อย", "ทำอะไรได้บ้าง"]
+        return any(kw in msg for kw in keywords)
+
+    def process(self, message: str, context: dict) -> dict:
+        msg = message.lower().strip()
+        user_name = context.get("user_name", "คุณผู้ใช้งาน")
+        
+        # ค้นหาชื่อเล่นผู้ใช้ที่บันทึกไว้ในประวัติ (ถ้ามี)
+        history = context.get("chat_history", [])
+        
+        if "สวัสดี" in msg or "hello" in msg or "hi" in msg:
+            response = (
+                f"สวัสดีครับ {user_name}! ยินดีต้อนรับสู่ระบบทีมสหายบอท 5 ตัว\n"
+                "ผมคือ **บอท 1 (ผู้ประสานงานแชต)** ยินดีที่ได้คุยกันครับ\n\n"
+                "💡 คุณสามารถพิมพ์คำสั่งต่อไปนี้ให้ทีมสหายบอททำได้:\n"
+                "1. **บันทึกโน้ต**: พิมพ์ 'จดโน้ต [ข้อความ]' หรือ 'บันทึก [ข้อความ]' เพื่อให้ **บอท 2 (จดบันทึก)** ลงมือทำ\n"
+                "2. **คำนวณตัวเลข**: พิมพ์เลขบวกกัน เช่น '150 + 250' หรือคำนวณสูตรคณิตศาสตร์เพื่อให้ **บอท 4 (คิดเลข)** ทำงาน\n"
+                "3. **สอบถามคำแนะนำ**: พิมพ์ 'ติดต่อ' หรือ 'วิธีใช้' เพื่อให้ **บอท 5 (ค้นหาข้อมูล)** ดึงคู่มือมาให้"
+            )
+        else:
+            response = (
+                f"เข้าใจแล้วครับ ผมได้รับข้อความของคุณแล้ว แต่ทีมเรายังไม่มีบอทเฉพาะทางสำหรับคำสั่งนี้\n\n"
+                f"ผม **บอท 1** เลยขอรับหน้าที่ตอบให้ก่อนนะครับ มีงานอะไรให้ทีมเราช่วยจดโน้ตหรือคำนวณเลขไหมครับ? พิมพ์บอกได้เลย!"
+            )
+            
+        return {
+            "response": response,
+            "status": "success"
+        }
+
+# ลงทะเบียนเอเจนต์ทันทีที่ไฟล์นี้ถูก import
+registry.register(ChatAgent())
+
