@@ -1,0 +1,12 @@
+# 1. ซ่อนไฟล์ Sensitive Key ของ Firebase
+serviceAccountKey.json
+*.json
+
+# 2. ซ่อนไฟล์ Virtual Environment และ Python Cache
+__pycache__/
+*.pyc
+venv/
+.env
+
+# 3. ซ่อนไฟล์ความปลอดภัยของระบบปฏิบัติการ
+.DS_Store
