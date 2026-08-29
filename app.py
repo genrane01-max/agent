@@ -1,4 +1,3 @@
-```python
 import os
 from flask import Flask, request, jsonify
 import firebase_admin
@@ -40,4 +39,3 @@ def ask_bot():
 if __name__ == "__main__":
     # ใช้ Port จาก Environment Variable ที่ Render กำหนดให้
     app.run(debug=True, port=int(os.environ.get("PORT", 5000)))
-```
