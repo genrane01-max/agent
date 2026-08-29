@@ -1,0 +1,214 @@
+import os
+import re
+from flask import Flask, request, jsonify
+import firebase_admin
+from firebase_admin import credentials, firestore
+
+app = Flask(__name__)
+
+# =====================================================================
+# 🛠️ ตั้งค่าระบบฐานข้อมูล (Firebase Firestore Setup)
+# =====================================================================
+# ออกแบบให้ระบบยืดหยุ่น ถ้ายังไม่ได้ตั้งค่า Firebase ก็จะไม่ทำให้เซิร์ฟเวอร์ล่ม (Fallback)
+db = None
+try:
+    # 1. พยายามใช้ไฟล์คีย์ของ Firebase (หากคุณอัปโหลดไฟล์นี้ขึ้นระบบ)
+    if os.path.exists('firebase-service-account.json'):
+        cred = credentials.Certificate('firebase-service-account.json')
+        firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        print("✅ เชื่อมต่อ Firebase Firestore สำเร็จ (ผ่าน Service Account File)")
+    else:
+        # 2. พยายามเชื่อมต่อแบบ Default (หากตั้งค่า Environment Variables บน Render)
+        firebase_admin.initialize_app()
+        db = firestore.client()
+        print("✅ เชื่อมต่อ Firebase สำเร็จ (ผ่าน Default Credentials)")
+except Exception as e:
+    print(f"⚠️ คำเตือน: ยังไม่สามารถเปิดใช้งาน Firebase ได้จริง ({e})")
+    print("ℹ️ ระบบจะทำงานในโหมด 'Local-Memory' (เก็บข้อมูลชั่วคราวใน RAM ของบอท) แทน")
+
+# โครงสร้างฐานข้อมูลสำรอง (กรณีไม่มี Firebase)
+local_db = {
+    "sessions": {},  # สำหรับบอท 3 (จำประวัติ)
+    "notes": [],     # สำหรับบอท 2 (จดบันทึก)
+    "faq": {         # สำหรับบอท 5 (ความรู้เฉพาะทาง)
+        "ติดต่อ": "คุณสามารถติดต่อผู้พัฒนาได้ที่อีเมล dev@example.com ครับ",
+        "เวลาทำการ": "บอทของคุณทำงานตลอด 24 ชั่วโมง ไม่มีวันหยุดครับ!",
+        "ช่วยเหลือ": "ฉันสามารถช่วยคุณ: 1. จดบันทึก (พิมพ์ 'บันทึกเรื่อง ...') 2. คำนวณเลข (พิมพ์ 'คำนวณ ...') 3. คุยทั่วไป"
+    }
+}
+
+
+# =====================================================================
+# 🤖 BOT 3: แผนกความจำ (Memory Bot)
+# =====================================================================
+# ทำหน้าที่ บันทึก และ ดึง ประวัติการพูดคุยของแต่ละคน
+def bot_3_memory_get(session_id):
+    if db:
+        try:
+            doc_ref = db.collection('sessions').document(session_id)
+            doc = doc_ref.get()
+            if doc.exists:
+                return doc.to_dict().get('history', [])
+        except Exception as e:
+            print(f"Error fetching memory: {e}")
+    return local_db["sessions"].get(session_id, [])
+
+def bot_3_memory_save(session_id, user_msg, bot_reply):
+    history = bot_3_memory_get(session_id)
+    history.append({"role": "user", "text": user_msg})
+    history.append({"role": "bot", "text": bot_reply})
+    
+    # จำกัดความจำให้จำย้อนหลังล่าสุดแค่ 6 ข้อความ เพื่อไม่ให้หนักฐานข้อมูล
+    if len(history) > 6:
+        history = history[-6:]
+
+    if db:
+        try:
+            db.collection('sessions').document(session_id).set({"history": history})
+        except Exception as e:
+            print(f"Error saving memory: {e}")
+    else:
+        local_db["sessions"][session_id] = history
+
+
+# =====================================================================
+# 🤖 BOT 4: แผนกตรรกะและคำนวณ (Logic & Code Bot)
+# =====================================================================
+# ทำหน้าที่ ประมวลผลตรรกะทางคณิตศาสตร์ และฟังก์ชันโค้ดต่างๆ
+def bot_4_logic_calculate(expression):
+    # คัดกรองตัวละครที่ไม่ปลอดภัยออกเพื่อความปลอดภัยของระบบ (ป้องกัน Code Injection)
+    clean_expr = re.sub(r'[^0-9+\-*/().\s]', '', expression)
+    if not clean_expr.strip():
+        return "ขออภัยครับ ฉันคำนวณให้ไม่ได้เนื่องจากมีตัวอักษรที่ไม่ใช่ตัวเลขหรือเครื่องหมายคำนวณ"
+    
+    try:
+        # คำนวณผลลัพธ์ทางคณิตศาสตร์
+        result = eval(clean_expr)
+        return f"🔢 ผลคำนวณของ '{expression}' คือ: **{result}**"
+    except Exception:
+        return "❌ ขออภัยครับ รูปแบบสมการคณิตศาสตร์ไม่ถูกต้อง ลองตรวจดูเครื่องหมายอีกครั้งนะครับ"
+
+
+# =====================================================================
+# 🤖 BOT 2: แผนกปฏิบัติการและบันทึก (Action Bot)
+# =====================================================================
+# ทำหน้าที่ สั่งการทำสิ่งต่างๆ เช่น บันทึกโน้ตลงฐานข้อมูล
+def bot_2_action_save_note(session_id, note_text):
+    note_data = {
+        "session_id": session_id,
+        "note": note_text,
+        "timestamp": firestore.SERVER_TIMESTAMP if db else "local_time"
+    }
+    
+    if db:
+        try:
+            db.collection('notes').add(note_data)
+            return f"📝 บอท 2 ได้ทำหน้าที่บันทึกเรื่อง: '{note_text}' ลง Firebase เรียบร้อยแล้วครับ!"
+        except Exception as e:
+            return f"❌ เกิดข้อผิดพลาดในการบันทึกลง Firebase: {e}"
+    else:
+        local_db["notes"].append(note_data)
+        return f"📝 บอท 2 ได้จดบันทึกเรื่อง: '{note_text}' ลงหน่วยความจำชั่วคราวแล้วครับ (ระบบยังไม่ได้เชื่อมต่อ Firebase)"
+
+
+# =====================================================================
+# 🤖 BOT 5: แผนกข้อมูลและคลังความรู้ (Knowledge Bot)
+# =====================================================================
+# ทำหน้าที่ ตรวจสอบข้อมูลเฉพาะทาง หรือคู่มือคำถามที่พบบ่อย (FAQ)
+def bot_5_knowledge_search(user_msg):
+    # ค้นหาจากคีย์เวิร์ดในระบบ FAQ
+    for key, value in local_db["faq"].items():
+        if key in user_msg:
+            return f"📚 บอท 5 (ฝ่ายข้อมูล) ค้นพบข้อมูลสำหรับคุณ: {value}"
+    return None
+
+
+# =====================================================================
+# 🤖 BOT 1: ผู้ประสานงานและพูดคุย (Chat Router Bot)
+# =====================================================================
+# เป็นหน้าด่านรับข้อความผู้ใช้ วิเคราะห์ความต้องการ แล้วส่งต่อให้บอทตัวที่เหมาะสม
+def bot_1_chat_router(session_id, user_msg):
+    user_msg_clean = user_msg.strip()
+    
+    # 1. เช็กความจำก่อน (บอท 3) เพื่อดูบริบท
+    recent_history = bot_3_memory_get(session_id)
+    
+    # 2. ส่งงานให้ บอท 2 (แผนกปฏิบัติการ) ถ้าพิมพ์คำว่า "บันทึกเรื่อง" หรือ "จดโน้ต"
+    if "บันทึกเรื่อง" in user_msg_clean or "จด" in user_msg_clean:
+        note_content = user_msg_clean.replace("บันทึกเรื่อง", "").replace("จด", "").strip()
+        if note_content:
+            reply = bot_2_action_save_note(session_id, note_content)
+        else:
+            reply = "💬 ต้องการให้ฉันบันทึกเรื่องอะไรดีครับ? พิมพ์บอกได้เลย เช่น 'บันทึกเรื่อง ซื้อของกิน'"
+            
+    # 3. ส่งงานให้ บอท 4 (แผนกคำนวณ) ถ้าพิมพ์คำว่า "คำนวณ" หรือ "บวก/ลบ/คูณ/หาร"
+    elif "คำนวณ" in user_msg_clean or any(op in user_msg_clean for op in ["+", "-", "*", "/"]):
+        math_expr = user_msg_clean.replace("คำนวณ", "").strip()
+        reply = bot_4_logic_calculate(math_expr)
+        
+    # 4. ส่งงานให้ บอท 5 (แผนกข้อมูล) เพื่อหาคำตอบเฉพาะทาง
+    elif bot_5_knowledge_search(user_msg_clean):
+        reply = bot_5_knowledge_search(user_msg_clean)
+        
+    # 5. การพูดคุยโต้ตอบทั่วไป (กรณีไม่มีคีย์เวิร์ดสั่งงานตัวอื่น)
+    else:
+        # ทักทาย
+        if any(greet in user_msg_clean.lower() for greet in ["สวัสดี", "hello", "hi", "หวัดดี"]):
+            reply = "สวัสดีครับ! ยินดีต้อนรับสู่ระบบบอทประสานงาน 5 ส่วน 🤖 มีอะไรให้พวกเราช่วยจดบันทึก หรือคำนวณไหมครับ?"
+        elif "ชื่ออะไร" in user_msg_clean:
+            reply = "พวกเราคือ 'บอททีมเวิร์ก 5 สหาย' ครับ! ประกอบด้วย บอทคุย บอททำ บอทจำ บอทโค้ด และบอทข้อมูล ทำงานประสานกันโดยไม่ต้องพึ่งพา AI ภายนอกครับ"
+        elif "สบายดีไหม" in user_msg_clean:
+            reply = "พวกเราสบายดีและพร้อมบริการคุณเสมอครับ! วันนี้อยากให้ทำอะไรแจ้งได้เลย"
+        else:
+            # คำตอบเริ่มต้นกรณีบอทไม่เข้าใจคำสั่ง
+            reply = "💬 ฉันได้ยินที่คุณพิมพ์มาครับ แต่คำสั่งนี้ยังไม่ได้ตั้งระบบไว้ คุณสามารถสั่งให้ฉัน 'จดบันทึก [ข้อความ]' หรือ 'คำนวณ [สมการคณิต]' ได้นะครับ!"
+
+    # 6. บันทึกบทสนทนาลงในระบบความจำ (บอท 3)
+    bot_3_memory_save(session_id, user_msg_clean, reply)
+    
+    return reply
+
+
+# =====================================================================
+# 🌐 เส้นทางเซิร์ฟเวอร์ (API Endpoints for Render)
+# =====================================================================
+@app.route('/', methods=['GET'])
+def index():
+    # แสดงสถานะบอทที่หน้าหลักเซิร์ฟเวอร์เพื่อให้เข้ากันได้กับหน้าเว็บปัจจุบันของคุณ
+    status = "Connected" if db else "Local-Memory Mode"
+    return f"""
+    <html>
+        <head><title>5-Bot Teamwork Brain</title></head>
+        <body style="font-family: sans-serif; text-align: center; padding-top: 50px; background-color: #f4f6f9;">
+            <h1 style="color: #2c3e50;">🧠 Advanced AI Bot Brain is Online</h1>
+            <p style="font-size: 1.2em; color: #7f8c8d;">ระบบสหายบอท 5 ส่วนทำงานร่วมกันอย่างเป็นระบบ</p>
+            <div style="display: inline-block; padding: 10px 20px; background-color: #2ecc71; color: white; border-radius: 20px; font-weight: bold; margin-top: 20px;">
+                Firebase Status: {status}
+            </div>
+        </body>
+    </html>
+    """
+
+@app.route('/chat', methods=['POST'])
+def chat_endpoint():
+    data = request.get_json() or {}
+    user_msg = data.get("message", "")
+    session_id = data.get("session_id", "default_user")  # ใช้แยกเก็บความจำของผู้ใช้แต่ละคน
+    
+    if not user_msg:
+        return jsonify({"error": "Missing message parameter"}), 400
+        
+    # สั่งให้ บอท 1 (ผู้ประสานงานหลัก) เริ่มประมวลผลข้อความและประสานงานบอทตัวอื่น
+    bot_response = bot_1_chat_router(session_id, user_msg)
+    
+    return jsonify({
+        "response": bot_response,
+        "session_id": session_id
+    })
+
+
+if __name__ == '__main__':
+    # รันเซิร์ฟเวอร์โดยรองรับพอร์ตที่ทาง Render กำหนดให้โดยอัตโนมัติ
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
